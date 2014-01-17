@@ -1,7 +1,6 @@
 package imageserver
 
 import (
-	l4g "code.google.com/p/log4go"
 	"io"
 	"net/http"
 	"os"
@@ -10,38 +9,39 @@ import (
 )
 import _ "net/http/pprof"
 
-const (
-	ROOTDIR = "/attachments/paopao"
-	PIC404  = "/static/default404.jpg"
-	LOGFILE = "imageserver.log"
-)
-
 var ReqMap *SafeMap
-var log l4g.Logger
 
 func init() {
+	initConf()
 	initLogger()
-	log.Info("CPU num %d", runtime.NumCPU())
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	initPool()
 	ReqMap = NewSafeMap()
+
+	log.Info("CPU num %d", runtime.NumCPU()-1)
+	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
 }
 
 func Run() {
-	go func() {
-		log.Info("prof on 6060")
-		log.Info(http.ListenAndServe(":6060", nil))
-	}()
+	go statsServer()
 	go uploadServer()
 	thumbServer()
 }
 
-func initLogger() {
-	log = make(l4g.Logger)
-	log.AddFilter("stdout", l4g.DEBUG, l4g.NewConsoleLogWriter())
+func statsServer() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", statsHandler)
 
-	flw := l4g.NewFileLogWriter(LOGFILE, false)
-	flw.SetRotateDaily(true)
-	log.AddFilter("file", l4g.INFO, flw)
+	log.Info("stats server on 9997")
+
+	s := &http.Server{
+		Addr:           ":9997",
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+		Handler:        mux,
+	}
+
+	log.Error(s.ListenAndServe())
 }
 
 func thumbServer() {
@@ -80,11 +80,17 @@ func uploadServer() {
 }
 
 func imageHandler(w http.ResponseWriter, r *http.Request) {
-
-	//dynamic
 	var req = Req{URI: r.RequestURI}
+	S.IncGet()
+
+	start := time.Now()
+	defer func() {
+		end := time.Now()
+		log.Info("fetch %s: %f s", req.URI, end.Sub(start).Seconds())
+	}()
 
 	if req.Parse() {
+
 		var img, err = getCache(req.hash)
 
 		if len(img) == 0 || err != nil {
@@ -94,7 +100,7 @@ func imageHandler(w http.ResponseWriter, r *http.Request) {
 				img, err = req.AutoResize()
 
 				if err == nil && len(img) > 0 {
-					log.Info("gen img done, queue length %d %s", q.length, req.URI)
+					log.Warn("regen img, queue length %d %s", q.length, req.URI)
 					ReqMap.DoAndDelete(req.hash, func() {
 						setCache(req.hash, img)
 						for i := q.length; i > 0; i-- {
@@ -106,7 +112,7 @@ func imageHandler(w http.ResponseWriter, r *http.Request) {
 					ReqMap.DoAndDelete(req.hash, func() {
 						close(q.ch)
 					})
-					log.Error("gen img error %s", req.URI)
+					log.Error("gen img error %s %v", req.URI, err)
 				}
 
 			} else {
@@ -120,7 +126,7 @@ func imageHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(img)
 
 	} else {
-		w.Header().Set("Location", PIC404)
+		w.Header().Set("Location", C.PIC404)
 		w.WriteHeader(http.StatusMovedPermanently)
 	}
 }
@@ -152,7 +158,7 @@ func post(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 
-		err = os.MkdirAll(ROOTDIR+req.path, 0755)
+		err = os.MkdirAll(C.ROOTDIR+req.path, 0755)
 		if err != nil {
 			log.Error("create dir error %s", []byte(err.Error()))
 			w.WriteHeader(http.StatusInternalServerError)
@@ -160,7 +166,7 @@ func post(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		f, err := os.OpenFile(ROOTDIR+req.ori_file, os.O_WRONLY|os.O_CREATE, 0755)
+		f, err := os.OpenFile(C.ROOTDIR+req.ori_file, os.O_WRONLY|os.O_CREATE, 0755)
 		if err != nil {
 			log.Error("create file error %s", []byte(err.Error()))
 			w.WriteHeader(http.StatusInternalServerError)
@@ -169,6 +175,8 @@ func post(w http.ResponseWriter, r *http.Request) {
 		}
 		defer f.Close()
 		io.Copy(f, file)
+		S.IncPost()
+		log.Info("upload %s", req.URI)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("invalid request"))
@@ -177,13 +185,15 @@ func post(w http.ResponseWriter, r *http.Request) {
 }
 
 func del(w http.ResponseWriter, r *http.Request) {
-
 	var req = Req{URI: r.RequestURI}
 	if req.Parse() {
-		var err = os.Remove(ROOTDIR + req.ori_file)
+		var err = os.Remove(C.ROOTDIR + req.ori_file)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
+		delCache(req.hash)
+		S.IncDelete()
+		log.Info("delete %s", req.URI)
 	} else {
 		w.WriteHeader(http.StatusNotFound)
 	}

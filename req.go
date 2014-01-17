@@ -35,17 +35,21 @@ func init() {
 	//defer imagick.Terminate()
 }
 
-func (r Req) AutoResize() ([]byte, error) {
+func (r *Req) AutoResize() ([]byte, error) {
 
 	mw := imagick.NewMagickWand()
 	// Schedule cleanup
 	defer mw.Destroy()
 
-	mw.ReadImage(ROOTDIR + r.ori_file)
+	mw.ReadImage(C.ROOTDIR + r.ori_file)
 
 	if r.width > 0 {
 		var ori_w = mw.GetImageWidth()
 		var ori_h = mw.GetImageHeight()
+
+		if r.width > ori_w {
+			r.width = ori_w
+		}
 
 		var height = r.height
 		if height == 0 {
@@ -87,9 +91,9 @@ func (r *Req) Parse() (ret bool) {
 
 	var h = md5.New()
 	h.Write([]byte(r.URI))
-	r.hash = hex.EncodeToString(h.Sum(nil))
+	r.hash = "IMG_" + hex.EncodeToString(h.Sum(nil))
 
-	var match = regexp.MustCompile(`(.+)/([0-9a-zA-Z]+)(_([0-9cx]+))?\.(jpg|webp)`).FindStringSubmatch(r.URI)
+	var match = regexp.MustCompile(`(.+)/([0-9a-zA-Z-]+)(_([0-9cx-]+))?\.(jpg|webp)`).FindStringSubmatch(r.URI)
 
 	var match_leng = len(match)
 	if match_leng == 6 {

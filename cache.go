@@ -1,75 +1,80 @@
 package imageserver
 
 import (
-	"menteslibres.net/gosexy/redis"
+	//"menteslibres.net/gosexy/redis"
+	"github.com/garyburd/redigo/redis"
+	"github.com/golang/groupcache/lru"
+	"time"
 )
 
-const (
-	POOLSIZE   = 200
-	CACHE_TTL  = int64(3)
-	REDIS_ADDR = "127.0.0.1"
-	REDIS_PORT = 6379
-)
+//var pool chan *Conn
+var pool *redis.Pool
+var L1 *lru.Cache
 
-type Conn struct {
-	counter uint
-	client  *redis.Client
-}
+func initPool() {
+	L1 = lru.New(C.L1_SIZE)
 
-var pool = make(chan *Conn, POOLSIZE)
-
-func init() {
-	go func() {
-		for i := 0; i < POOLSIZE; i++ {
-			var c = redis.New()
-			if c.Connect(REDIS_ADDR, REDIS_PORT) == nil {
-				pool <- &Conn{0, c}
+	pool = &redis.Pool{
+		MaxIdle:     C.POOLSIZE,
+		MaxActive:   0,
+		IdleTimeout: 3600 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			c, err := redis.Dial("tcp", C.REDIS_ADDR)
+			if err != nil {
+				return nil, err
 			}
-		}
-	}()
+			return c, err
+		},
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			_, err := c.Do("PING")
+			return err
+		},
+	}
 }
 
 func getCache(key string) (val []byte, err error) {
-	var conn = getConn()
-	var _val string
-	_val, err = conn.client.Get(key)
-	pool <- conn
-	if err != nil {
-		log.Error("cache get error %s", err)
+	_val, ok := L1.Get(key)
+	if ok {
+		val = _val.([]byte)
+		log.Fine("L1 hit %s", key)
+		S.IncL1Hit()
 	} else {
-		val = []byte(_val)
+		log.Fine("L1 miss %s", key)
+		S.IncL1Miss()
+
+		var conn = pool.Get()
+		defer conn.Close()
+		val, err = redis.Bytes(conn.Do("GET", key))
+
+		if err != nil {
+			log.Fine("L2 miss %s %s", key, err)
+			S.IncL2Miss()
+		} else {
+			S.IncL2Hit()
+			L1.Add(key, val)
+		}
 	}
+
 	return
 }
 
 func setCache(key string, val []byte) (bool, error) {
-	var conn = getConn()
+	L1.Add(key, val)
 
-	var err error
-	//str, err = conn.client.Set(key, val)
-	_, err = conn.client.SetEx(key, CACHE_TTL, val)
-	pool <- conn
+	var conn = pool.Get()
+	defer conn.Close()
+	_, err := conn.Do("SET", key, string(val), "EX", C.CACHE_TTL)
+
 	if err != nil {
-		log.Error("cache set error %s", err)
+		log.Error("L2 set error %s", err)
 	}
 	return err != nil, err
 }
 
-func delCache(key string) (bool, error) {
-	var conn = getConn()
-
-	var err error
-	//str, err = conn.client.Set(key, val)
-	_, err = conn.client.Del(key)
-	pool <- conn
-	if err != nil {
-		log.Error("cache set error %s", err)
-	}
-	return err != nil, err
-}
-
-func getConn() (conn *Conn) {
-	conn = <-pool
-	conn.counter++
+func delCache(key string) (err error) {
+	L1.Remove(key)
+	var conn = pool.Get()
+	defer conn.Close()
+	_, err = conn.Do("DEL", key)
 	return
 }
