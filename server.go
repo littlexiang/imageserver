@@ -17,8 +17,9 @@ func init() {
 	initPool()
 	ReqMap = NewSafeMap()
 
-	log.Info("CPU num %d", runtime.NumCPU()-1)
-	runtime.GOMAXPROCS(runtime.NumCPU() - 1)
+	log.Info("CPU num %d / %d", C.CPU_NUM, runtime.NumCPU())
+	runtime.GOMAXPROCS(C.CPU_NUM)
+
 }
 
 func Run() {

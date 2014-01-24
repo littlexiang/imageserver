@@ -5,7 +5,9 @@ import (
 )
 
 type Conf struct {
-	config   *goconfig.ConfigFile
+	config *goconfig.ConfigFile
+
+	CPU_NUM  int
 	ROOTDIR  string
 	PIC404   string
 	LOGFILE  string
@@ -30,13 +32,14 @@ func initConf() {
 }
 
 func (conf *Conf) Load() {
-	conf.ROOTDIR = conf.config.MustValue(goconfig.DEFAULT_SECTION, "rootdir", "/attachments/paopao")
-	conf.PIC404 = conf.config.MustValue(goconfig.DEFAULT_SECTION, "pic404", "/static/default404.jpg")
+	conf.CPU_NUM = conf.config.MustInt(goconfig.DEFAULT_SECTION, "cpu_num", 4)
+	conf.ROOTDIR = conf.config.MustValue(goconfig.DEFAULT_SECTION, "rootdir", "/")
+	conf.PIC404 = conf.config.MustValue(goconfig.DEFAULT_SECTION, "pic404", "")
 	conf.LOGFILE = conf.config.MustValue(goconfig.DEFAULT_SECTION, "log", "imageserver.log")
 	conf.LOGLEVEL = conf.config.MustValue(goconfig.DEFAULT_SECTION, "log_level", "warn")
 
 	conf.POOLSIZE = conf.config.MustInt("cache", "pool_size", 200)
 	conf.CACHE_TTL = conf.config.MustInt64("cache", "ttl", 3600)
-	conf.REDIS_ADDR = conf.config.MustValue("cache", "redis_addr", "127.0.0.1:6379")
+	conf.REDIS_ADDR = conf.config.MustValue("cache", "redis_addr", "/var/run/redis/redis.sock")
 	conf.L1_SIZE = conf.config.MustInt("cache", "L1_size", 1024)
 }

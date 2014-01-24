@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/gographics/imagick/imagick"
+	//"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,7 +41,7 @@ func (r *Req) AutoResize() ([]byte, error) {
 	mw := imagick.NewMagickWand()
 	// Schedule cleanup
 	defer mw.Destroy()
-
+	log.Fine("%#v", r)
 	mw.ReadImage(C.ROOTDIR + r.ori_file)
 
 	if r.width > 0 {
@@ -67,7 +68,7 @@ func (r *Req) AutoResize() ([]byte, error) {
 			}
 		}
 
-		var err = mw.ResizeImage(r.width, height, imagick.FILTER_LANCZOS2, 1)
+		err := mw.ResizeImage(r.width, height, imagick.FILTER_LANCZOS2, 1)
 
 		if err != nil {
 			return nil, err
@@ -80,9 +81,11 @@ func (r *Req) AutoResize() ([]byte, error) {
 
 		mw.SetImageCompressionQuality(85)
 	}
+	log.Info("%s", mw.GetImageFormat())
 
-	mw.SetFormat(r.format)
+	err := mw.SetFormat(r.format)
 
+	log.Info("%s, %s, %v", mw.GetFormat(), r.format, err)
 	return mw.GetImageBlob(), nil
 
 }
@@ -92,6 +95,8 @@ func (r *Req) Parse() (ret bool) {
 	var h = md5.New()
 	h.Write([]byte(r.URI))
 	r.hash = "IMG_" + hex.EncodeToString(h.Sum(nil))
+
+	//log.Info("%s", r.hash)
 
 	var match = regexp.MustCompile(`(.+)/([0-9a-zA-Z-]+)(_([0-9cx-]+))?\.(jpg|webp)`).FindStringSubmatch(r.URI)
 
